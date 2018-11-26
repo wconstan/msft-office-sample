@@ -1,3 +1,5 @@
+# install.packages(c('data.table', 'randomForest', 'caret', 'ggplot2', 'e1071','DMwR','ROSE'))
+
 ###
 # Load packages
 library(data.table)
@@ -5,6 +7,8 @@ library(randomForest)
 library(caret)
 library(ggplot2)
 library(e1071)
+library(DMwR)
+library(ROSE)
 
 ###
 # Define local functions
@@ -102,8 +106,9 @@ fit_model <- function(form,
     
     sampling <- match.arg(tolower(sampling),
                           choices = c("none", "down", "up", "smote", "rose"))
-
+    
     ctrl <- trainControl(method = method, 
+                         sampling = if (sampling == "none") NULL else sampling,
                          number = folds, 
                          repeats = repeats, 
                          verboseIter = verbose)
@@ -124,14 +129,38 @@ fit_model <- function(form,
 
 add_noise <- function(x, snr=2){
     noise <- rnorm(x)
-    k <- sqrt(var(x)/(signal_to_noise_ratio*var(noise)))
+    k <- sqrt(var(x)/(snr*var(noise)))
     x + k * noise 
 }
 
+get_metrics <- function(obj,  
+                        metrics = c('Sensitivity','Specificity','Precision',
+                                    'Recall','F1','Balanced Accuracy'),
+                        snr = NA,
+                        classifier = 'rf'){
+    obj_name <- deparse(substitute(obj))
+    sampling_methods <- names(obj)
+    
+    metric_dt <- do.call('cbind', lapply(sampling_methods, function(s) {
+        data = data.table(obj[[s]]$confusion$byClass[metrics])
+        setnames(data, s)
+        return(data)
+    }))
+    
+    snr_levels = paste0('snr = ', c(NA, 2, 1))
+    
+    metrics[length(metrics)] <- "Accuracy"
+    metric_dt[, classifier := classifier]
+    metric_dt[, metric := factor(metrics, levels = metrics)]
+    metric_dt[, snr := factor(sprintf('snr = %s', snr), levels = snr_levels)]
+    melt(data=metric_dt, 
+         id.vars = c('classifier', 'metric', 'snr'), 
+         variable.name = 'sampling')
+}
 
 ###
 # load data
-dt <- data.table::fread('/Users/william/msft/msft_office/test_dataset.csv')
+dt <- data.table::fread('test_dataset.csv')
 dt$Outcome = dt[, factor(Outcome)]
 
 ###
@@ -175,7 +204,6 @@ sprintf('classification error: original = %.2f, (V9 >= %.3f) = %.2f',
         majority_class_error_original,
         v9_cut,
         majority_class_error_v9split)
-
 
 ###
 # create training and validation data sets using a 70/30 split
@@ -238,13 +266,45 @@ logit_snr_2 = sapply(sampling_methods, function(sampling){
               seed = 10)
 }, simplify = FALSE)
 
+###
+# SNR = 1
+training_data_snr_1 <- copy(training_data)
+training_data_snr_1$V9 = add_noise(training_data_snr_1$V9, snr=1)
 
-# Let's define a "positive outcome" as one where Outcome = 0 and a "negative outcome" as one where Outcome = 1 
-# Sensitivity : true positive rate
-# Specificity : true negative rate
-# Precision : true positives, i.e., the proportion of positive predictions that 
-#             were actually from positive samples. 
-# F1 is the weighted average of precision and sensitivity/ recall.
+scatter_snr_1 <- pairs_plot(training_data_snr_1, dep_var = dep_var, standardize = TRUE)
+print(scatter_snr_1$plot)
 
+rf_snr_1 = sapply(sampling_methods, function(sampling){
+    fit_model(form=form,
+              classifier = "rf",
+              training_data = training_data_snr_1, 
+              validation_data = validation_data,
+              sampling = sampling, 
+              seed = 5)
+}, simplify = FALSE)
 
+logit_snr_1 = sapply(sampling_methods, function(sampling){
+    fit_model(form=form,
+              classifier = "glm", family="binomial",
+              training_data = training_data_snr_1, 
+              validation_data = validation_data,
+              sampling = sampling, 
+              seed = 10)
+}, simplify = FALSE)
+
+###
+# Collect performance metrics
+metrics_dt <- rbindlist(list(
+    get_metrics(rf, classifier = 'rf'),
+    get_metrics(logit, classifier = 'logit'),
+    get_metrics(rf_snr_2, classifier = 'rf', snr=2),
+    get_metrics(logit_snr_2, classifier = 'logit', snr = 2),
+    get_metrics(rf_snr_1, classifier = 'rf', snr = 1),
+    get_metrics(logit_snr_1, classifier = 'logit', snr = 1)
+    ))
+
+ggplot(metrics_dt, aes(metric, value, colour = classifier)) +
+    geom_point() + facet_grid(snr ~ sampling) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+    labs(y='')
 
