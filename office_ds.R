@@ -94,11 +94,11 @@ confusion_matrix <- function(score_df){
 fit_model <- function(form,
                       classifier = "rf",
                       training_data, 
-                      validation_data, 
+                      test_data, 
                       sampling="none",
                       method = "repeatedcv", # repeated cross-valiation
                       repeats = 5, # 5 repeats of ...
-                      folds = 10, # 10-fold validation
+                      folds = 10, # 10-folds
                       pre_process = c("scale", "center"), # scale and recenter data, a priori
                       verbose = FALSE,
                       seed = NULL, 
@@ -122,7 +122,7 @@ fit_model <- function(form,
                           trControl = ctrl, 
                           ...)
 
-    score <- score_model(model, validation_data)
+    score <- score_model(model, test_data)
     confusion <- confusion_matrix(score)
     list(model=model, score=score, confusion=confusion)
 }
@@ -162,6 +162,7 @@ get_metrics <- function(obj,
 # load data
 dt <- data.table::fread('test_dataset.csv')
 dt$Outcome = dt[, factor(Outcome)]
+View(dt)
 
 ###
 # Define regression formula
@@ -206,11 +207,11 @@ sprintf('classification error: original = %.2f, (V9 >= %.3f) = %.2f',
         majority_class_error_v9split)
 
 ###
-# create training and validation data sets using a 70/30 split
+# create training and test data sets using a 70/30 split
 set.seed(10) # set seed for replicability 
 index <- createDataPartition(dt[[dep_var]], p = 0.7, list = FALSE)
 training_data <- dt[index, ]
-validation_data  <- dt[-index, ]
+test_data  <- dt[-index, ]
 
 ###
 # Fit various random forest models, using caret's sampling functions
@@ -223,7 +224,7 @@ rf = sapply(sampling_methods, function(sampling){
     fit_model(form=form,
               classifier = "rf",
               training_data = training_data, 
-              validation_data = validation_data,
+              test_data = test_data,
               sampling = sampling, 
               seed = 500)
 }, simplify = FALSE)
@@ -232,7 +233,7 @@ logit = sapply(sampling_methods, function(sampling){
     fit_model(form=form,
               classifier = "glm", family="binomial",
               training_data = training_data, 
-              validation_data = validation_data,
+              test_data = test_data,
               sampling = sampling, 
               seed = 100)
 }, simplify = FALSE)
@@ -252,7 +253,7 @@ rf_snr_2 = sapply(sampling_methods, function(sampling){
     fit_model(form=form,
               classifier = "rf",
               training_data = training_data_snr_2, 
-              validation_data = validation_data,
+              test_data = test_data,
               sampling = sampling, 
               seed = 5)
 }, simplify = FALSE)
@@ -261,7 +262,7 @@ logit_snr_2 = sapply(sampling_methods, function(sampling){
     fit_model(form=form,
               classifier = "glm", family="binomial",
               training_data = training_data_snr_2, 
-              validation_data = validation_data,
+              test_data = test_data,
               sampling = sampling, 
               seed = 10)
 }, simplify = FALSE)
@@ -278,7 +279,7 @@ rf_snr_1 = sapply(sampling_methods, function(sampling){
     fit_model(form=form,
               classifier = "rf",
               training_data = training_data_snr_1, 
-              validation_data = validation_data,
+              test_data = test_data,
               sampling = sampling, 
               seed = 5)
 }, simplify = FALSE)
@@ -287,7 +288,7 @@ logit_snr_1 = sapply(sampling_methods, function(sampling){
     fit_model(form=form,
               classifier = "glm", family="binomial",
               training_data = training_data_snr_1, 
-              validation_data = validation_data,
+              test_data = test_data,
               sampling = sampling, 
               seed = 10)
 }, simplify = FALSE)
@@ -295,12 +296,12 @@ logit_snr_1 = sapply(sampling_methods, function(sampling){
 ###
 # Collect performance metrics
 metrics_dt <- rbindlist(list(
-    get_metrics(rf, classifier = 'rf'),
-    get_metrics(logit, classifier = 'logit'),
-    get_metrics(rf_snr_2, classifier = 'rf', snr=2),
-    get_metrics(logit_snr_2, classifier = 'logit', snr = 2),
-    get_metrics(rf_snr_1, classifier = 'rf', snr = 1),
-    get_metrics(logit_snr_1, classifier = 'logit', snr = 1)
+    get_metrics(rf, classifier = 'random forest'),
+    get_metrics(logit, classifier = 'logistic regression'),
+    get_metrics(rf_snr_2, classifier = 'random forest', snr=2),
+    get_metrics(logit_snr_2, classifier = 'logistic regression', snr = 2),
+    get_metrics(rf_snr_1, classifier = 'random forest', snr = 1),
+    get_metrics(logit_snr_1, classifier = 'logistic regression', snr = 1)
     ))
 
 ggplot(metrics_dt, aes(metric, value, colour = classifier)) +
